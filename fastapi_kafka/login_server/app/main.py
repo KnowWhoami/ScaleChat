@@ -1,0 +1,153 @@
+import os
+from contextlib import asynccontextmanager
+from typing import Annotated
+from sqlmodel import Field, Session, SQLModel, create_engine, select, inspect
+
+from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
+from passlib.context import CryptContext
+from pydantic import BaseModel
+import logging
+
+from .jwt_auth import ACCESS_TOKEN_EXPIRATION, oauth2_scheme, create_access_token, get_username_from_token
+from .database import SessionDep, create_db_and_tables, engine
+from .models import User
+
+# set up the loggin in docker
+logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    first_name: str
+    last_name: str
+    email: str
+    password: str
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # startup
+    #create_db_and_tables()
+    yield
+    # shutdown
+
+app = FastAPI(lifespan=lifespan)
+
+@app.get("/db-check")
+def check_db():
+    inspector = inspect(engine)
+    tables = inspector.get_table_names(schema="public")
+    return {"tables": tables}
+
+
+
+def verify_password(plain_password: str, hashed_password: str):
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+def get_password_hash(password: str):
+    return pwd_context.hash(password)
+
+
+def get_user(session: Session, username: str) -> User | None:
+    user = session.get(User, username)
+    return user
+
+
+def authenticate_user(session: Session, username: str, password: str):
+    user = get_user(session, username)
+    if not user:
+        return False
+    if not verify_password(password, user.password_hash):
+        return False
+    return user
+
+
+
+async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)], session: SessionDep):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    username = get_username_from_token(token)
+
+    user = get_user(session, username=username)
+
+    if user is None:
+        raise credentials_exception
+
+    return user
+
+
+async def get_current_active_user(current_user: Annotated[User, Depends(get_current_user)]):
+    if current_user.disabled:
+        raise HTTPException(status_code=400, detail="Inactive user")
+    return current_user
+
+
+@app.post("/token")
+async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()], session: SessionDep) -> Token:
+    user = authenticate_user(session, form_data.username, form_data.password)
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=ACCESS_TOKEN_EXPIRATION
+    )
+
+    logger.info(f"Access token created for user: {user.username}")
+
+    logger.info(f"token: {access_token}")
+
+    return Token(access_token=access_token, token_type="bearer")
+
+@app.post("/users", response_model=User)
+def create_user(register_data: RegisterRequest, session: SessionDep):
+    if get_user(session, register_data.username):
+        raise HTTPException(status_code=400, detail="Username already registered")
+
+    existing_email = session.exec(select(User).where(User.email == register_data.email)).first()
+    if existing_email:
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    db_user = User(
+        username=register_data.username,
+        first_name=register_data.first_name,
+        last_name=register_data.last_name,
+        email=register_data.email,
+        password_hash=get_password_hash(register_data.password)
+    )
+    session.add(db_user)
+    session.commit()
+    session.refresh(db_user)
+    return db_user
+
+@app.get("/")
+async def root():
+    return {"message": "Hello World"}
+
+
+@app.get("/users/me")
+async def read_user_me(current_user: Annotated[User, Depends(get_current_user)]):
+    return current_user
+
+
+@app.get("/items")
+async def read_items(token: Annotated[str, Depends(oauth2_scheme)]):
+    return {"token": token}
+
+

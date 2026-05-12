@@ -1,0 +1,291 @@
+{% extends "base.html" %}
+
+{% block title %}{{ channel_name }} - Realtime Chat{% endblock %}
+
+{% block nav_items %}
+<li class="nav-item">
+    <a class="nav-link" href="/channels">&laquo; Back to Channels</a>
+</li>
+<li class="nav-item">
+    <span class="nav-link">Welcome, {{ username }}</span>
+</li>
+<li class="nav-item">
+    <a class="nav-link" href="/logout">Logout</a>
+</li>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-9">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h3># {{ channel_name }}</h3>
+                <div class="d-flex align-items-center gap-2">
+                    <span id="connection-status" class="badge bg-secondary">Disconnected</span>
+                    <button id="leave-channel-btn" class="btn btn-sm btn-outline-danger" disabled>Leave Channel</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="chat-messages" class="mb-3" style="height: 400px; overflow-y: auto; border: 1px solid #ddd; padding: 10px;">
+                    <div class="text-center text-muted" id="loading-message">
+                        <p>Connecting to chat...</p>
+                    </div>
+                </div>
+                <form id="message-form">
+                    <div class="input-group">
+                        <input type="text" id="message-input" class="form-control" placeholder="Type your message..." autocomplete="off">
+                        <button class="btn btn-primary" type="submit" id="send-button" disabled>Send</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card h-100">
+            <div class="card-header">
+                <h6 class="mb-0" id="members-header">Members</h6>
+            </div>
+            <div class="card-body p-2" style="overflow-y: auto; max-height: 480px;">
+                <div id="members-list">
+                    <div class="text-center text-muted p-2"><small>Connecting...</small></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const username = "{{ username }}";
+    const token = "{{ token }}";
+    const channelId = parseInt("{{ channel_id }}");
+    const websocketBaseUrl = "{{ websocket_url }}";
+
+    let socket;
+    let membersRefreshInterval;
+    const messageForm = document.getElementById('message-form');
+    const messageInput = document.getElementById('message-input');
+    const messagesContainer = document.getElementById('chat-messages');
+    const sendButton = document.getElementById('send-button');
+    const connectionStatus = document.getElementById('connection-status');
+    const loadingMessage = document.getElementById('loading-message');
+    const membersList = document.getElementById('members-list');
+    const membersHeader = document.getElementById('members-header');
+    const leaveChannelBtn = document.getElementById('leave-channel-btn');
+
+    let currentDateString = '';
+
+    function connectWebSocket() {
+        const websocketUrl = `${websocketBaseUrl}?token=${encodeURIComponent(token)}`;
+        socket = new WebSocket(websocketUrl);
+
+        socket.onopen = function(e) {
+            connectionStatus.textContent = "Connected";
+            connectionStatus.className = "badge bg-success";
+            sendButton.disabled = false;
+            leaveChannelBtn.disabled = false;
+
+            addMessage({ username: "System", message: "You are now connected to the chat!", timestamp: new Date().toISOString() }, true);
+
+            requestChatHistory();
+            requestMembers();
+            membersRefreshInterval = setInterval(requestMembers, 30000);
+        };
+
+        socket.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+
+            if (data.error) {
+                alert(`Error: ${data.error}`);
+                return;
+            }
+
+            if (data.status === "sent") {
+                // acknowledgment — nothing to do
+            } else if (data.status === "left") {
+                window.location.href = '/channels';
+            } else if (data.type === "members") {
+                displayMembers(data.members);
+            } else if (data.messages) {
+                displayChatHistory(data.messages);
+            } else {
+                addMessage(data);
+                requestMembers(); // refresh online status when someone sends a message
+            }
+        };
+
+        socket.onclose = function(event) {
+            connectionStatus.textContent = "Disconnected";
+            connectionStatus.className = "badge bg-danger";
+            sendButton.disabled = true;
+            leaveChannelBtn.disabled = true;
+            clearInterval(membersRefreshInterval);
+        };
+
+        socket.onerror = function(error) {
+            connectionStatus.textContent = "Error";
+            connectionStatus.className = "badge bg-danger";
+        };
+    }
+
+    function requestChatHistory() {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            loadingMessage.innerHTML = '<div class="spinner-border text-primary" role="status"></div><p>Loading chat history...</p>';
+            socket.send(JSON.stringify({ type: 1, data: JSON.stringify({ operation: 4, channel_id: channelId }) }));
+        }
+    }
+
+    function requestMembers() {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 1, data: JSON.stringify({ operation: 5, channel_id: channelId }) }));
+        }
+    }
+
+    function leaveChannel() {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 1, data: JSON.stringify({ operation: 6, channel_id: channelId }) }));
+        }
+    }
+
+    function displayMembers(members) {
+        const online = members.filter(m => m.online);
+        const offline = members.filter(m => !m.online);
+
+        membersHeader.textContent = `Members · ${online.length}/${members.length} online`;
+
+        membersList.innerHTML = '';
+
+        const renderMember = (m) => {
+            const div = document.createElement('div');
+            div.className = 'd-flex align-items-center p-1 rounded mb-1 member-row';
+            div.innerHTML = `
+                <span class="status-dot ${m.online ? 'dot-online' : 'dot-offline'}"></span>
+                <span class="ms-2 ${m.username === username ? 'fw-bold' : ''}">${m.username === username ? m.username + ' (you)' : m.username}</span>
+            `;
+            membersList.appendChild(div);
+        };
+
+        // online members first
+        [...online, ...offline].forEach(renderMember);
+    }
+
+    function displayChatHistory(messages) {
+        loadingMessage.remove();
+
+        if (!messages || messages.length === 0) {
+            addMessage({ username: "System", message: "No previous messages in this channel.", timestamp: new Date().toISOString() }, true);
+            return;
+        }
+
+        messages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        currentDateString = '';
+        messages.forEach(message => addMessage(message));
+
+        const divider = document.createElement('div');
+        divider.className = 'chat-message system-message';
+        divider.innerHTML = '<div class="text-center"><hr><span class="badge bg-secondary">New Messages</span><hr></div>';
+        messagesContainer.appendChild(divider);
+    }
+
+    function formatTimestamp(timestamp, showDateOnly = false) {
+        const date = new Date(timestamp);
+        const today = new Date();
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+
+        if (showDateOnly) {
+            if (date.toDateString() === today.toDateString()) return 'Today';
+            if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
+            return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+        }
+        return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function checkAndAddDateHeader(timestamp) {
+        const dateString = new Date(timestamp).toDateString();
+        if (dateString !== currentDateString) {
+            currentDateString = dateString;
+            const dateHeader = document.createElement('div');
+            dateHeader.className = 'date-header';
+            dateHeader.innerHTML = `<div class="text-center"><div class="date-divider"><span class="date-badge">${formatTimestamp(timestamp, true)}</span></div></div>`;
+            messagesContainer.appendChild(dateHeader);
+        }
+    }
+
+    function addMessage(data, isSystem = false) {
+        if (!isSystem) checkAndAddDateHeader(data.timestamp);
+
+        const messageDiv = document.createElement('div');
+        messageDiv.className = isSystem ? 'chat-message system-message' : 'chat-message';
+
+        const time = formatTimestamp(data.timestamp);
+
+        if (isSystem) {
+            messageDiv.innerHTML = `<div class="text-center"><span class="badge bg-secondary">${time}</span> <span>${data.message}</span></div>`;
+        } else {
+            const isSelf = data.username === username;
+            messageDiv.innerHTML = `
+                <div class="message ${isSelf ? 'message-self' : 'message-other'}">
+                    <div class="message-header">
+                        <strong>${isSelf ? 'You' : data.username}</strong>
+                        <small class="text-muted">${time}</small>
+                    </div>
+                    <div class="message-body">${data.message}</div>
+                </div>
+            `;
+        }
+
+        messagesContainer.appendChild(messageDiv);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+
+    function generateMessageId() {
+        return 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    }
+
+    messageForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const message = messageInput.value.trim();
+        if (message && socket && socket.readyState === WebSocket.OPEN) {
+            const messageData = {
+                message_id: generateMessageId(),
+                channel_id: channelId,
+                timestamp: new Date().toISOString(),
+                username: username,
+                message: message
+            };
+            socket.send(JSON.stringify({ type: 0, data: JSON.stringify(messageData) }));
+            messageInput.value = '';
+            addMessage(messageData);
+        }
+    });
+
+    document.addEventListener('DOMContentLoaded', connectWebSocket);
+
+    document.getElementById('leave-channel-btn').addEventListener('click', function() {
+        if (confirm('Leave this channel?')) {
+            leaveChannel();
+        }
+    });
+</script>
+<style>
+    .chat-message { margin-bottom: 15px; display: flex; width: 100%; }
+    .message { padding: 8px 12px; border-radius: 8px; max-width: 70%; }
+    .message-self { background-color: #dcf8c6; margin-left: auto; margin-right: 10px; border-bottom-right-radius: 0; text-align: right; }
+    .message-other { background-color: #f1f0f0; margin-right: auto; margin-left: 10px; border-bottom-left-radius: 0; }
+    .system-message { color: #6c757d; font-style: italic; text-align: center; margin: 10px auto; width: 100%; }
+    .message-header { margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center; }
+    .message-body { word-wrap: break-word; }
+    .message-self .message-header { flex-direction: row-reverse; }
+    .date-header { width: 100%; margin: 20px 0 10px 0; text-align: center; }
+    .date-divider { position: relative; height: 1px; background-color: #ddd; margin: 15px 0; }
+    .date-badge { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background-color: white; padding: 0 10px; font-weight: bold; color: #6c757d; }
+
+    .status-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+    .dot-online { background-color: #28a745; }
+    .dot-offline { background-color: #adb5bd; }
+    .member-row:hover { background-color: #f8f9fa; }
+</style>
+{% endblock %}

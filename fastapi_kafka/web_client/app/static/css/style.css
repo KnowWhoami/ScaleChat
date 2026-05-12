@@ -1,0 +1,107 @@
+/* Main styles for the chat application */
+
+body {
+    background-color: #f8f9fa;
+}
+
+.card {
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    border: none;
+}
+
+.card-header {
+    background-color: #f1f1f1;
+    border-bottom: 1px solid #ddd;
+}
+
+/* Chat specific styles */
+#chat-messages {
+    background-color: white;
+    border-radius: 4px;
+}
+
+/* Message display */
+.message {
+    display: inline-block;
+    margin-bottom: 8px;
+}
+
+.message-self {
+    border-top-right-radius: 0 !important;
+}
+
+.message-other {
+    border-top-left-radius: 0 !important;
+}
+
+/* Login form */
+.form-control:focus {
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+    border-color: #86b7fe;
+}
+
+/* ── Dark mode overrides ── */
+
+[data-bs-theme="dark"] body {
+    background-color: #121212;
+}
+
+[data-bs-theme="dark"] .card {
+    background-color: #1e1e1e;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+}
+
+[data-bs-theme="dark"] .card-header {
+    background-color: #2a2a2a;
+    border-bottom-color: #444;
+}
+
+[data-bs-theme="dark"] #chat-messages {
+    background-color: #1e1e1e;
+    border-color: #444 !important;
+}
+
+/* Own messages: muted green tinted dark */
+[data-bs-theme="dark"] .message-self {
+    background-color: #1a3a2a !important;
+    color: #e8f5e9;
+}
+
+/* Other messages: dark gray */
+[data-bs-theme="dark"] .message-other {
+    background-color: #2d2d2d !important;
+    color: #e0e0e0;
+}
+
+[data-bs-theme="dark"] .date-divider {
+    background-color: #444;
+}
+
+[data-bs-theme="dark"] .date-badge {
+    background-color: #1e1e1e;
+    color: #adb5bd;
+}
+
+[data-bs-theme="dark"] .member-row:hover {
+    background-color: #2d2d2d;
+}
+
+[data-bs-theme="dark"] .list-group-item {
+    background-color: #1e1e1e;
+    border-color: #444;
+    color: #e0e0e0;
+}
+
+[data-bs-theme="dark"] .list-group-item:hover {
+    background-color: #2d2d2d;
+}
+
+[data-bs-theme="dark"] .modal-content {
+    background-color: #1e1e1e;
+    border-color: #444;
+}
+
+[data-bs-theme="dark"] .modal-header,
+[data-bs-theme="dark"] .modal-footer {
+    border-color: #444;
+}
